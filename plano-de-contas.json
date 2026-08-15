@@ -1,0 +1,100 @@
+{
+  "_comentario": "Fonte de verdade do plano de contas. Extraído da planilha Kay_2026 (blocos de orçamento e blocos mensais por conta). Ao alterar aqui, replique no Code node 'Montar Requisição' do workflow 10-core-lancamento.json.",
+  "_versao": "1.0.0",
+
+  "contas": [
+    { "id": "bradesco",   "nome": "Bradesco",                  "tipo": "conta_corrente", "titular": "Kayo" },
+    { "id": "inter",      "nome": "Banco Inter - Incyclus",    "tipo": "conta_pj",       "titular": "Incyclus" },
+    { "id": "mercadopago","nome": "Mercado Pago - DevHouse",   "tipo": "conta_pj",       "titular": "DevHouse" },
+    { "id": "itau",       "nome": "Itaú",                      "tipo": "conta_corrente", "titular": "Kayo" },
+    { "id": "rico",       "nome": "Rico",                      "tipo": "investimento",   "titular": "Kayo" }
+  ],
+
+  "cartoes": [
+    { "id": "bradesco_elo20", "nome": "Bradesco ELO 20", "rubrica": "Bradesco ELO 20 (Mensal", "vencimento_dia": 20 },
+    { "id": "bradesco_05",    "nome": "Bradesco 05",     "rubrica": "Bradesco 05 (mensal)",    "vencimento_dia": 5 },
+    { "id": "nubank_04",      "nome": "Nubank 04",       "rubrica": "Nubank 04 (assinaturas)", "vencimento_dia": 4 },
+    { "id": "itau_azul",      "nome": "Itaú Azul",       "rubrica": "Itau Azul (zerar)",       "vencimento_dia": 11 },
+    { "id": "pao_acucar",     "nome": "Cartão Pão de Açúcar", "rubrica": "Cartão P.A (parcelados)", "vencimento_dia": 25 },
+    { "id": "mercado_pago",   "nome": "Cartão Mercado Pago",  "rubrica": "Merc.Pg.Aliment.Tr",      "vencimento_dia": 10 }
+  ],
+
+  "_nota_rubricas": "São EXATAMENTE as linhas do bloco de orçamento anual da Kay_2026. Não renomeie sem atualizar a planilha, senão o SUMIFS da aba Realizado quebra.",
+  "rubricas_despesa": [
+    "AluguelCondomín.",
+    "Escola Malu",
+    "Merc.Pg.Aliment.Tr",
+    "Bradesco ELO 20 (Mensal",
+    "Bradesco 05 (mensal)",
+    "Nubank 04 (assinaturas)",
+    "Itau Azul (zerar)",
+    "Cartão P.A (parcelados)",
+    "Sem Parar",
+    "Selma/Gloria",
+    "Natiane",
+    "Luz Enel",
+    "Comgás",
+    "Tarifas.Tx;Impostos",
+    "Empréstimo Itaú",
+    "Impostos Incyclus",
+    "Extras"
+  ],
+
+  "rubricas_receita": [
+    "Bolt",
+    "Incyclus",
+    "Migratio",
+    "Karen",
+    "Aporte / 13º / Férias",
+    "Extras"
+  ],
+
+  "_nota_categorias": "Eixo NOVO — natureza do gasto. Hoje a Kay_2026 só enxerga por instrumento de pagamento (qual cartão), então não responde 'no que eu gastei'. Este eixo responde. Os dois convivem: cada lançamento recebe categoria E rubrica.",
+  "categorias": {
+    "Moradia":            ["Aluguel", "Condomínio", "IPTU", "Energia", "Gás", "Água", "Internet/TV", "Manutenção", "Mobiliário"],
+    "Alimentação":        ["Supermercado", "Feira/Hortifruti", "Restaurante", "Delivery", "Padaria", "Café/Lanche"],
+    "Transporte":         ["Combustível", "Pedágio/Sem Parar", "App de transporte", "Estacionamento", "Manutenção veicular", "IPVA/Licenciamento", "Seguro auto", "Financiamento veículo"],
+    "Saúde":              ["Plano de saúde", "Farmácia", "Consulta/Exame", "Terapia", "Academia/Esporte"],
+    "Educação":           ["Escola", "Curso", "Material escolar", "Livros"],
+    "Filhos":             ["Mensalidade escolar", "Vestuário infantil", "Atividades", "Brinquedos", "Saúde infantil"],
+    "Serviços Domésticos":["Diarista", "Mensalista", "Babá", "13º/Encargos"],
+    "Pessoal":            ["Vestuário", "Beleza/Barbearia", "Presentes", "Assinaturas", "Hobbies", "Celular"],
+    "Lazer":              ["Streaming", "Viagem", "Passeios", "Bar/Restaurante social", "Eventos"],
+    "Doações":            ["Igreja/Oferta", "Doação", "Ação social"],
+    "Impostos e Tarifas": ["Tarifa bancária", "Juros/Encargos", "IOF", "Simples Nacional", "DARF/DAS", "Multas", "Outros impostos"],
+    "Dívidas":            ["Empréstimo", "Parcelamento", "Cheque especial"],
+    "Investimentos":      ["Aporte", "Cripto", "Previdência", "Reserva"],
+    "Família/Karen":      ["Aluguel Karen", "Espólio", "Repasse", "Aporte recebido"],
+    "Receitas":           ["Salário", "Pró-labore", "Comissão", "Aluguel recebido", "Rendimentos", "Reembolso", "13º/Férias", "Outras receitas"],
+    "Transferências":     ["Entre contas próprias", "Pagamento de fatura", "Aporte para terceiros"],
+    "Outros":             ["Não classificado"]
+  },
+
+  "_nota_depara": "categoria -> rubrica do orçamento. Usado quando o lançamento NÃO vem de fatura de cartão. Lançamentos de cartão herdam a rubrica do cartão (ver campo 'rubrica' em cartoes[]).",
+  "de_para_categoria_rubrica": {
+    "Moradia|Aluguel":                 "AluguelCondomín.",
+    "Moradia|Condomínio":              "AluguelCondomín.",
+    "Moradia|IPTU":                    "AluguelCondomín.",
+    "Moradia|Energia":                 "Luz Enel",
+    "Moradia|Gás":                     "Comgás",
+    "Educação|Escola":                 "Escola Malu",
+    "Filhos|Mensalidade escolar":      "Escola Malu",
+    "Transporte|Pedágio/Sem Parar":    "Sem Parar",
+    "Serviços Domésticos|Mensalista":  "Selma/Gloria",
+    "Serviços Domésticos|13º/Encargos":"Selma/Gloria",
+    "Serviços Domésticos|Diarista":    "Natiane",
+    "Impostos e Tarifas|Tarifa bancária":  "Tarifas.Tx;Impostos",
+    "Impostos e Tarifas|Juros/Encargos":   "Tarifas.Tx;Impostos",
+    "Impostos e Tarifas|IOF":              "Tarifas.Tx;Impostos",
+    "Impostos e Tarifas|Multas":           "Tarifas.Tx;Impostos",
+    "Impostos e Tarifas|Simples Nacional": "Impostos Incyclus",
+    "Impostos e Tarifas|DARF/DAS":         "Impostos Incyclus",
+    "Impostos e Tarifas|Outros impostos":  "Impostos Incyclus",
+    "Dívidas|Empréstimo":              "Empréstimo Itaú",
+    "Dívidas|Cheque especial":         "Tarifas.Tx;Impostos",
+    "Alimentação|Supermercado":        "Merc.Pg.Aliment.Tr",
+    "_default":                        "Extras"
+  },
+
+  "pessoas": ["Kayo", "Renata", "Karen", "Compartilhado"]
+}

@@ -1,0 +1,392 @@
+{
+  "name": "Financeiro · 20 · Entrada Telegram",
+  "nodes": [
+    {
+      "parameters": {
+        "updates": [
+          "message"
+        ],
+        "additionalFields": {}
+      },
+      "id": "tg-trigger",
+      "name": "Telegram",
+      "type": "n8n-nodes-base.telegramTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        -200,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "// ============================================================\n// Identifica o que chegou pelo Telegram e prepara o payload.\n// Node: Code (modo: Run Once for Each Item)\n// ============================================================\n\nconst upd = $json;\nconst msg = upd.message || upd.channel_post || upd.edited_message || {};\nconst chat = msg.chat || {};\nconst from = msg.from || {};\n\nlet tipo = 'texto';\nlet file_id = '';\nlet mime = '';\nlet nome_arquivo = '';\n\nif (Array.isArray(msg.photo) && msg.photo.length) {\n  // O Telegram manda várias resoluções; a última é a maior.\n  tipo = 'foto';\n  file_id = msg.photo[msg.photo.length - 1].file_id;\n  mime = 'image/jpeg';\n} else if (msg.document) {\n  tipo = 'documento';\n  file_id = msg.document.file_id;\n  mime = (msg.document.mime_type || 'application/pdf').toLowerCase();\n  nome_arquivo = msg.document.file_name || '';\n} else if (msg.voice || msg.audio) {\n  tipo = 'audio';\n}\n\nconst texto = msg.text || msg.caption || '';\n\n// Mapeia quem mandou. Ajuste os IDs em MAPA_PESSOAS depois do primeiro teste:\n// mande qualquer mensagem para o bot e leia o from.id no log de execução.\nconst MAPA_PESSOAS = {\n  // 123456789: 'Kayo',\n  // 987654321: 'Renata'\n};\nconst pessoa = MAPA_PESSOAS[from.id] || 'Kayo';\n\n// Origem granular ajuda a rastrear de onde veio cada linha da planilha.\nlet origem = 'telegram_texto';\nif (tipo === 'foto') origem = 'telegram_foto';\nelse if (tipo === 'documento') origem = mime.includes('pdf') ? 'pdf_fatura' : 'telegram_foto';\n\nreturn {\n  json: {\n    tipo,\n    file_id,\n    mime,\n    nome_arquivo,\n    texto,\n    pessoa,\n    origem,\n    chat_id: chat.id,\n    message_id: msg.message_id,\n    tem_midia: tipo === 'foto' || tipo === 'documento',\n    audio_nao_suportado: tipo === 'audio'\n  }\n};\n"
+      },
+      "id": "roteador",
+      "name": "Roteador",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        20,
+        300
+      ],
+      "notes": "Detecta foto / PDF / texto e define a pessoa.",
+      "notesInFlow": true
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "m1",
+              "leftValue": "={{ $json.tem_midia }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "looseTypeValidation": true,
+        "options": {}
+      },
+      "id": "if-midia",
+      "name": "Tem arquivo?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        240,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "resource": "file",
+        "fileId": "={{ $json.file_id }}"
+      },
+      "id": "tg-getfile",
+      "name": "Baixar Arquivo",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        460,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "binaryToPropery",
+        "binaryPropertyName": "data",
+        "destinationKey": "base64",
+        "options": {}
+      },
+      "id": "to-base64",
+      "name": "Converter p/ Base64",
+      "type": "n8n-nodes-base.extractFromFile",
+      "typeVersion": 1,
+      "position": [
+        680,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "p1",
+              "name": "origem",
+              "value": "={{ $('Roteador').item.json.origem }}",
+              "type": "string"
+            },
+            {
+              "id": "p2",
+              "name": "pessoa",
+              "value": "={{ $('Roteador').item.json.pessoa }}",
+              "type": "string"
+            },
+            {
+              "id": "p3",
+              "name": "texto",
+              "value": "={{ $('Roteador').item.json.texto }}",
+              "type": "string"
+            },
+            {
+              "id": "p4",
+              "name": "mime",
+              "value": "={{ $('Roteador').item.json.mime }}",
+              "type": "string"
+            },
+            {
+              "id": "p5",
+              "name": "nome_arquivo",
+              "value": "={{ $('Roteador').item.json.nome_arquivo }}",
+              "type": "string"
+            },
+            {
+              "id": "p6",
+              "name": "chat_id",
+              "value": "={{ $('Roteador').item.json.chat_id }}",
+              "type": "string"
+            },
+            {
+              "id": "p7",
+              "name": "base64",
+              "value": "={{ $json.base64 }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "payload-midia",
+      "name": "Payload (arquivo)",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        900,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "t1",
+              "name": "origem",
+              "value": "={{ $json.origem }}",
+              "type": "string"
+            },
+            {
+              "id": "t2",
+              "name": "pessoa",
+              "value": "={{ $json.pessoa }}",
+              "type": "string"
+            },
+            {
+              "id": "t3",
+              "name": "texto",
+              "value": "={{ $json.texto }}",
+              "type": "string"
+            },
+            {
+              "id": "t4",
+              "name": "chat_id",
+              "value": "={{ $json.chat_id }}",
+              "type": "string"
+            },
+            {
+              "id": "t5",
+              "name": "base64",
+              "value": "",
+              "type": "string"
+            },
+            {
+              "id": "t6",
+              "name": "mime",
+              "value": "",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "payload-texto",
+      "name": "Payload (texto)",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        680,
+        420
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://localhost:5678/webhook/lancamento",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "timeout": 300000
+        }
+      },
+      "id": "chamar-core",
+      "name": "Processar",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1120,
+        300
+      ],
+      "notes": "Chama o workflow 10-core.\nUse a mesma credencial Header Auth do webhook.",
+      "notesInFlow": true
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// ============================================================\n// Formata a confirmação enviada de volta no Telegram.\n// Node: Code (modo: Run Once for All Items)\n// ============================================================\n\nconst itens = $input.all().map(i => i.json);\n\n// Achata: dependendo de como o HTTP Request devolveu, pode vir aninhado.\nconst lancs = [];\nfor (const it of itens) {\n  if (Array.isArray(it)) { lancs.push(...it); continue; }\n  if (Array.isArray(it.data)) { lancs.push(...it.data); continue; }\n  lancs.push(it);\n}\n\nconst chatId = (lancs.find(l => l._chat_id) || {})._chat_id || '';\n\n// Nada reconhecido no conteúdo enviado.\nconst vazios = lancs.filter(l => l._vazio);\nif (vazios.length && lancs.length === vazios.length) {\n  return [{\n    json: {\n      chat_id: chatId,\n      texto: '🤔 Não identifiquei nenhum lançamento nesse conteúdo.\\n\\n' +\n             'Tente uma foto mais nítida, ou escreva direto — por exemplo:\\n' +\n             '<code>almoço 45 no débito</code>',\n      tem_botoes: false,\n      hash: ''\n    }\n  }];\n}\n\nfunction moeda(v) {\n  return Number(v).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });\n}\n\nfunction dataBR(d) {\n  const p = String(d).split('-');\n  return p.length === 3 ? `${p[2]}/${p[1]}/${p[0]}` : d;\n}\n\nconst SINAL = { despesa: '−', receita: '+', transferencia: '⇄' };\n\nconst validos = lancs.filter(l => !l._vazio);\n\n// Muitos lançamentos (fatura inteira): manda um resumo, não 40 mensagens.\nif (validos.length > 5) {\n  const total = validos\n    .filter(l => l.tipo === 'despesa')\n    .reduce((s, l) => s + Number(l.valor), 0);\n\n  const pendentes = validos.filter(l => l.status === 'pendente').length;\n\n  const porRubrica = {};\n  for (const l of validos) {\n    if (l.tipo !== 'despesa') continue;\n    porRubrica[l.rubrica] = (porRubrica[l.rubrica] || 0) + Number(l.valor);\n  }\n  const linhas = Object.entries(porRubrica)\n    .sort((a, b) => b[1] - a[1])\n    .slice(0, 8)\n    .map(([r, v]) => `  • ${r}: R$ ${moeda(v)}`)\n    .join('\\n');\n\n  return [{\n    json: {\n      chat_id: chatId,\n      texto: `✅ <b>${validos.length} lançamentos</b> registrados\\n\\n` +\n             `<b>Total despesas:</b> R$ ${moeda(total)}\\n\\n` +\n             `<b>Por rubrica:</b>\\n${linhas}\\n\\n` +\n             (pendentes ? `⚠️ <b>${pendentes}</b> precisam de revisão — filtre por <code>pendente</code> na aba Lancamentos.` : '🎯 Todos classificados com confiança.'),\n      tem_botoes: false,\n      hash: ''\n    }\n  }];\n}\n\n// Poucos lançamentos: uma mensagem por lançamento, com botões.\nreturn validos.map(l => {\n  const alerta = l.status === 'pendente' ? '\\n\\n⚠️ <i>Classificação incerta — confira antes de confirmar.</i>' : '';\n  const parcela = l.parcelas_total > 1 ? `\\n<b>Parcela:</b> ${l.parcela_atual}/${l.parcelas_total}` : '';\n  const conta = l.conta_cartao && l.conta_cartao !== 'Desconhecido' ? `\\n<b>Conta/Cartão:</b> ${l.conta_cartao}` : '';\n\n  return {\n    json: {\n      chat_id: l._chat_id || chatId,\n      hash: l.hash_dedup,\n      tem_botoes: true,\n      texto:\n        `${SINAL[l.tipo] || '•'} <b>R$ ${moeda(l.valor)}</b> — ${l.estabelecimento || l.descricao}\\n\\n` +\n        `<b>Data:</b> ${dataBR(l.data)}\\n` +\n        `<b>Categoria:</b> ${l.categoria} › ${l.subcategoria}\\n` +\n        `<b>Rubrica:</b> ${l.rubrica}\\n` +\n        `<b>Método:</b> ${l.metodo}` +\n        conta + parcela +\n        alerta\n    }\n  };\n});\n"
+      },
+      "id": "formatar-resposta",
+      "name": "Formatar Resposta",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1340,
+        300
+      ],
+      "notes": "Monta a confirmação. Até 5 lançamentos = 1 msg cada;\nacima disso, um resumo agregado.",
+      "notesInFlow": true
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $json.chat_id }}",
+        "text": "={{ $json.texto }}",
+        "additionalFields": {
+          "parse_mode": "HTML",
+          "appendAttribution": false
+        }
+      },
+      "id": "tg-responder",
+      "name": "Responder",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        1560,
+        300
+      ]
+    }
+  ],
+  "connections": {
+    "Telegram": {
+      "main": [
+        [
+          {
+            "node": "Roteador",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Roteador": {
+      "main": [
+        [
+          {
+            "node": "Tem arquivo?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Tem arquivo?": {
+      "main": [
+        [
+          {
+            "node": "Baixar Arquivo",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Payload (texto)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Baixar Arquivo": {
+      "main": [
+        [
+          {
+            "node": "Converter p/ Base64",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Converter p/ Base64": {
+      "main": [
+        [
+          {
+            "node": "Payload (arquivo)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Payload (arquivo)": {
+      "main": [
+        [
+          {
+            "node": "Processar",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Payload (texto)": {
+      "main": [
+        [
+          {
+            "node": "Processar",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Processar": {
+      "main": [
+        [
+          {
+            "node": "Formatar Resposta",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Formatar Resposta": {
+      "main": [
+        [
+          {
+            "node": "Responder",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "timezone": "America/Sao_Paulo",
+    "saveDataErrorExecution": "all",
+    "saveDataSuccessExecution": "all"
+  },
+  "pinData": {},
+  "tags": [
+    {
+      "name": "gestao-financeira"
+    }
+  ]
+}

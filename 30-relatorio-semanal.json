@@ -1,0 +1,169 @@
+{
+  "name": "Financeiro · 30 · Relatório semanal",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "weeks",
+              "triggerAtDay": [
+                1
+              ],
+              "triggerAtHour": 8,
+              "triggerAtMinute": 0
+            }
+          ]
+        }
+      },
+      "id": "cron-rel",
+      "name": "Toda segunda 8h",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        -200,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "documentId": {
+          "__rl": true,
+          "value": "COLE_AQUI_O_ID_DA_PLANILHA",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Lancamentos",
+          "mode": "name"
+        },
+        "options": {}
+      },
+      "id": "ler-lanc",
+      "name": "Ler Lancamentos",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        40,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "documentId": {
+          "__rl": true,
+          "value": "COLE_AQUI_O_ID_DA_PLANILHA",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Projecao",
+          "mode": "name"
+        },
+        "options": {}
+      },
+      "id": "ler-proj",
+      "name": "Ler Projecao",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        280,
+        300
+      ],
+      "notes": "Aba com as rubricas na coluna A\ne os meses nas colunas seguintes.",
+      "notesInFlow": true
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// ============================================================\n// Consolida o mês corrente e compara com a projeção.\n// Node: Code (modo: Run Once for All Items)\n// Entradas: \"Ler Lancamentos\" e \"Ler Projecao\"\n// ============================================================\n\nconst AGORA = new Date().toLocaleDateString('sv-SE', { timeZone: 'America/Sao_Paulo' });\nconst ANO = Number(AGORA.slice(0, 4));\nconst MES = Number(AGORA.slice(5, 7));\nconst DIA = Number(AGORA.slice(8, 10));\nconst MESES = ['janeiro', 'fevereiro', 'março', 'abril', 'maio', 'junho',\n               'julho', 'agosto', 'setembro', 'outubro', 'novembro', 'dezembro'];\n\nfunction num(v) {\n  if (typeof v === 'number') return v;\n  if (v === null || v === undefined || v === '') return 0;\n  // Formato brasileiro: \"-2.295,91\" -> -2295.91\n  const s = String(v).replace(/[R$\\s]/g, '').replace(/\\./g, '').replace(',', '.');\n  const n = parseFloat(s);\n  return isFinite(n) ? n : 0;\n}\n\nfunction moeda(v) {\n  return Number(v).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });\n}\n\n// ---------- Realizado ----------\nconst lancs = $('Ler Lancamentos').all().map(i => i.json)\n  .filter(l => {\n    if (!l.data || l.status === 'excluido') return false;\n    const d = String(l.data);\n    return Number(d.slice(0, 4)) === ANO && Number(d.slice(5, 7)) === MES;\n  });\n\nconst despesas = lancs.filter(l => l.tipo === 'despesa');\nconst receitas = lancs.filter(l => l.tipo === 'receita');\n\nconst totalDespesa = despesas.reduce((s, l) => s + num(l.valor), 0);\nconst totalReceita = receitas.reduce((s, l) => s + num(l.valor), 0);\n\nconst porRubrica = {};\nfor (const l of despesas) {\n  const r = l.rubrica || 'Extras';\n  porRubrica[r] = (porRubrica[r] || 0) + num(l.valor);\n}\n\nconst porCategoria = {};\nfor (const l of despesas) {\n  const c = l.categoria || 'Outros';\n  porCategoria[c] = (porCategoria[c] || 0) + num(l.valor);\n}\n\n// ---------- Projeção ----------\n// A aba de projeção tem rubricas na coluna A e meses nas colunas seguintes.\nconst projRows = $('Ler Projecao').all().map(i => i.json);\nconst colunaMes = MESES[MES - 1];\nconst projetado = {};\nfor (const row of projRows) {\n  const chaves = Object.keys(row);\n  const rubrica = String(row[chaves[0]] || '').trim();\n  if (!rubrica) continue;\n  // Procura a coluna do mês ignorando caixa e acento residual do cabeçalho.\n  const colKey = chaves.find(k => k.toLowerCase().trim() === colunaMes);\n  if (colKey) projetado[rubrica] = Math.abs(num(row[colKey]));\n}\n\n// ---------- Comparativo ----------\nconst rubricas = [...new Set([...Object.keys(porRubrica), ...Object.keys(projetado)])];\nconst comparativo = rubricas\n  .map(r => {\n    const real = porRubrica[r] || 0;\n    const proj = projetado[r] || 0;\n    return { rubrica: r, real, proj, delta: real - proj, temDado: real > 0 || proj > 0 };\n  })\n  .filter(x => x.temDado)\n  .sort((a, b) => b.delta - a.delta);\n\nconst estouros = comparativo.filter(x => x.proj > 0 && x.delta > 0.01);\nconst naoClassificados = lancs.filter(l => l.status === 'pendente').length;\n\n// ---------- Ritmo do mês ----------\nconst diasNoMes = new Date(ANO, MES, 0).getDate();\nconst ritmo = DIA > 0 ? (totalDespesa / DIA) * diasNoMes : 0;\nconst projTotal = Object.values(projetado).reduce((s, v) => s + v, 0);\n\n// ---------- Mensagem ----------\nconst L = [];\nL.push(`📊 <b>Prévia de ${MESES[MES - 1]}/${ANO}</b>  <i>(dia ${DIA} de ${diasNoMes})</i>`);\nL.push('');\nL.push(`<b>Receitas:</b>  R$ ${moeda(totalReceita)}`);\nL.push(`<b>Despesas:</b>  R$ ${moeda(totalDespesa)}`);\nL.push(`<b>Saldo:</b>     R$ ${moeda(totalReceita - totalDespesa)}`);\nL.push('');\n\nif (projTotal > 0) {\n  L.push(`<b>Ritmo projetado p/ fechar o mês:</b> R$ ${moeda(ritmo)}`);\n  L.push(`<b>Orçado no mês:</b> R$ ${moeda(projTotal)}`);\n  const dif = ritmo - projTotal;\n  L.push(dif > 0\n    ? `⚠️ No ritmo atual, fecha <b>R$ ${moeda(dif)} acima</b> do orçado.`\n    : `✅ No ritmo atual, fecha <b>R$ ${moeda(-dif)} abaixo</b> do orçado.`);\n  L.push('');\n}\n\nif (estouros.length) {\n  L.push('<b>🔴 Rubricas acima do orçado</b>');\n  for (const e of estouros.slice(0, 8)) {\n    L.push(`  ${e.rubrica}`);\n    L.push(`  R$ ${moeda(e.real)} / R$ ${moeda(e.proj)}  <b>(+${moeda(e.delta)})</b>`);\n  }\n  L.push('');\n}\n\nconst topCat = Object.entries(porCategoria).sort((a, b) => b[1] - a[1]).slice(0, 6);\nif (topCat.length) {\n  L.push('<b>Onde o dinheiro foi (natureza)</b>');\n  for (const [c, v] of topCat) {\n    const pct = totalDespesa > 0 ? Math.round((v / totalDespesa) * 100) : 0;\n    L.push(`  • ${c}: R$ ${moeda(v)} <i>(${pct}%)</i>`);\n  }\n  L.push('');\n}\n\nL.push(`<b>Lançamentos no mês:</b> ${lancs.length}`);\nif (naoClassificados) {\n  L.push(`⚠️ <b>${naoClassificados}</b> pendentes de revisão.`);\n}\n\nreturn [{\n  json: {\n    texto: L.join('\\n'),\n    total_despesa: totalDespesa,\n    total_receita: totalReceita,\n    qtd_lancamentos: lancs.length,\n    qtd_pendentes: naoClassificados,\n    estouros: estouros.length\n  }\n}];\n"
+      },
+      "id": "consolidar",
+      "name": "Consolidar",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        520,
+        300
+      ],
+      "notes": "Projetado × Realizado + ritmo de gasto do mês.",
+      "notesInFlow": true
+    },
+    {
+      "parameters": {
+        "chatId": "COLE_AQUI_SEU_CHAT_ID",
+        "text": "={{ $json.texto }}",
+        "additionalFields": {
+          "parse_mode": "HTML",
+          "appendAttribution": false
+        }
+      },
+      "id": "tg-rel",
+      "name": "Enviar",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        760,
+        300
+      ]
+    }
+  ],
+  "connections": {
+    "Toda segunda 8h": {
+      "main": [
+        [
+          {
+            "node": "Ler Lancamentos",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Ler Lancamentos": {
+      "main": [
+        [
+          {
+            "node": "Ler Projecao",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Ler Projecao": {
+      "main": [
+        [
+          {
+            "node": "Consolidar",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Consolidar": {
+      "main": [
+        [
+          {
+            "node": "Enviar",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "timezone": "America/Sao_Paulo",
+    "saveDataErrorExecution": "all",
+    "saveDataSuccessExecution": "all"
+  },
+  "pinData": {},
+  "tags": [
+    {
+      "name": "gestao-financeira"
+    }
+  ]
+}

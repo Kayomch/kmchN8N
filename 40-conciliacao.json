@@ -1,0 +1,278 @@
+{
+  "name": "Financeiro · 40 · Conciliação de duplicatas",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "weeks",
+              "triggerAtDay": [
+                0
+              ],
+              "triggerAtHour": 20,
+              "triggerAtMinute": 0
+            }
+          ]
+        }
+      },
+      "id": "cron-conc",
+      "name": "Domingo 20h",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        -200,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "documentId": {
+          "__rl": true,
+          "value": "COLE_AQUI_O_ID_DA_PLANILHA",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Lancamentos",
+          "mode": "name"
+        },
+        "options": {}
+      },
+      "id": "ler-conc",
+      "name": "Ler Lancamentos",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        40,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// ============================================================\n// Procura lançamentos possivelmente duplicados.\n// Node: Code (modo: Run Once for All Items)\n//\n// O hash_dedup pega duplicata exata. Este nó pega o caso real:\n// a notificação do cartão chega na hora da compra, e a mesma compra\n// aparece de novo quando você manda o PDF da fatura no fim do mês.\n// Mesmo valor, mesmo estabelecimento, datas próximas, origens diferentes.\n// ============================================================\n\nconst JANELA_DIAS = 4;\nconst TOLERANCIA_VALOR = 0.02; // centavos de arredondamento entre fontes\n\nfunction semAcento(s) {\n  return String(s || '')\n    .normalize('NFD').replace(/[\\u0300-\\u036f]/g, '')\n    .toLowerCase().replace(/[^a-z0-9]/g, '');\n}\n\nfunction num(v) {\n  if (typeof v === 'number') return v;\n  const s = String(v || '').replace(/[R$\\s]/g, '').replace(/\\./g, '').replace(',', '.');\n  const n = parseFloat(s);\n  return isFinite(n) ? n : 0;\n}\n\nfunction dias(a, b) {\n  const da = new Date(a + 'T00:00:00Z').getTime();\n  const db = new Date(b + 'T00:00:00Z').getTime();\n  if (!isFinite(da) || !isFinite(db)) return 999;\n  return Math.abs(da - db) / 86400000;\n}\n\nconst linhas = $input.all()\n  .map((i, idx) => ({ ...i.json, _linha: idx + 2 })) // +2: cabeçalho + índice base 1\n  .filter(l => l.status !== 'excluido' && l.status !== 'revisar' && l.valor);\n\nconst suspeitas = [];\nconst jaMarcado = new Set();\n\nfor (let i = 0; i < linhas.length; i++) {\n  for (let j = i + 1; j < linhas.length; j++) {\n    const a = linhas[i];\n    const b = linhas[j];\n\n    if (jaMarcado.has(a.id) || jaMarcado.has(b.id)) continue;\n    if (a.tipo !== b.tipo) continue;\n\n    const va = num(a.valor);\n    const vb = num(b.valor);\n    if (Math.abs(va - vb) > TOLERANCIA_VALOR) continue;\n\n    const d = dias(a.data, b.data);\n    if (d > JANELA_DIAS) continue;\n\n    const ea = semAcento(a.estabelecimento);\n    const eb = semAcento(b.estabelecimento);\n    if (!ea || !eb) continue;\n\n    // Um nome contido no outro cobre \"IFOOD\" vs \"IFOODSAOPAULO\".\n    const parecido = ea === eb || ea.includes(eb) || eb.includes(ea);\n    if (!parecido) continue;\n\n    // Origens iguais e mesma data provavelmente são duas compras reais\n    // (dois cafés no mesmo lugar no mesmo dia acontece).\n    // O sinal forte é a mesma compra vindo por caminhos diferentes.\n    const origensDiferentes = a.origem !== b.origem;\n    const confianca = origensDiferentes ? 'alta' : 'media';\n\n    jaMarcado.add(b.id);\n    suspeitas.push({\n      confianca,\n      manter_id: a.id,\n      manter_origem: a.origem,\n      manter_data: a.data,\n      revisar_id: b.id,\n      revisar_origem: b.origem,\n      revisar_data: b.data,\n      revisar_linha: b._linha,\n      estabelecimento: b.estabelecimento,\n      valor: vb,\n      distancia_dias: d\n    });\n  }\n}\n\nif (!suspeitas.length) {\n  return [{ json: { _sem_suspeitas: true, texto: '' } }];\n}\n\nfunction moeda(v) {\n  return Number(v).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });\n}\n\nconst altas = suspeitas.filter(s => s.confianca === 'alta');\nconst medias = suspeitas.filter(s => s.confianca === 'media');\n\nconst L = [];\nL.push(`🔍 <b>${suspeitas.length} possível(is) duplicata(s)</b>`);\nL.push('');\n\nif (altas.length) {\n  L.push('<b>Provável (origens diferentes)</b>');\n  for (const s of altas.slice(0, 10)) {\n    L.push(`  • R$ ${moeda(s.valor)} — ${s.estabelecimento}`);\n    L.push(`    ${s.manter_origem} (${s.manter_data}) × ${s.revisar_origem} (${s.revisar_data})`);\n    L.push(`    → linha ${s.revisar_linha} marcada como <code>revisar</code>`);\n  }\n  L.push('');\n}\n\nif (medias.length) {\n  L.push('<b>Talvez (mesma origem — pode ser compra real repetida)</b>');\n  for (const s of medias.slice(0, 6)) {\n    L.push(`  • R$ ${moeda(s.valor)} — ${s.estabelecimento} (${s.revisar_data})`);\n  }\n  L.push('');\n}\n\nL.push('<i>Nada foi apagado. Confira na aba Lancamentos e ajuste o status.</i>');\n\n// Um item por suspeita para o nó seguinte marcar status=revisar,\n// mais o texto do alerta no primeiro item.\nreturn suspeitas.map((s, idx) => ({\n  json: {\n    ...s,\n    id: s.revisar_id,\n    status: 'revisar',\n    observacao: `Possível duplicata de ${s.manter_id} (${s.manter_origem}, ${s.manter_data})`,\n    texto: idx === 0 ? L.join('\\n') : '',\n    _primeiro: idx === 0\n  }\n}));\n"
+      },
+      "id": "detectar-duplicatas",
+      "name": "Detectar Duplicatas",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        280,
+        300
+      ],
+      "notes": "Mesmo valor + estabelecimento parecido + até 4 dias\n+ origens diferentes = provável duplicata.",
+      "notesInFlow": true
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "d1",
+              "leftValue": "={{ $json._sem_suspeitas }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "false",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "looseTypeValidation": true,
+        "options": {}
+      },
+      "id": "if-susp",
+      "name": "Achou duplicata?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        520,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "appendOrUpdate",
+        "documentId": {
+          "__rl": true,
+          "value": "COLE_AQUI_O_ID_DA_PLANILHA",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Lancamentos",
+          "mode": "name"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "matchingColumns": [
+            "id"
+          ],
+          "value": {
+            "id": "={{ $json.id }}",
+            "status": "={{ $json.status }}",
+            "observacao": "={{ $json.observacao }}"
+          },
+          "schema": [],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "options": {}
+      },
+      "id": "marcar-revisar",
+      "name": "Marcar p/ revisão",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        760,
+        220
+      ],
+      "notes": "Só muda status e observação.\nNunca apaga linha — decisão de excluir é sua.",
+      "notesInFlow": true
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "p1",
+              "leftValue": "={{ $json._primeiro }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "looseTypeValidation": true,
+        "options": {}
+      },
+      "id": "if-primeiro",
+      "name": "Primeiro item",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        980,
+        220
+      ],
+      "notes": "Um alerta só, não um por duplicata.",
+      "notesInFlow": true
+    },
+    {
+      "parameters": {
+        "chatId": "COLE_AQUI_SEU_CHAT_ID",
+        "text": "={{ $json.texto }}",
+        "additionalFields": {
+          "parse_mode": "HTML",
+          "appendAttribution": false
+        }
+      },
+      "id": "tg-conc",
+      "name": "Avisar",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        1200,
+        220
+      ]
+    }
+  ],
+  "connections": {
+    "Domingo 20h": {
+      "main": [
+        [
+          {
+            "node": "Ler Lancamentos",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Ler Lancamentos": {
+      "main": [
+        [
+          {
+            "node": "Detectar Duplicatas",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Detectar Duplicatas": {
+      "main": [
+        [
+          {
+            "node": "Achou duplicata?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Achou duplicata?": {
+      "main": [
+        [
+          {
+            "node": "Marcar p/ revisão",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Marcar p/ revisão": {
+      "main": [
+        [
+          {
+            "node": "Primeiro item",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Primeiro item": {
+      "main": [
+        [
+          {
+            "node": "Avisar",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "timezone": "America/Sao_Paulo",
+    "saveDataErrorExecution": "all",
+    "saveDataSuccessExecution": "all"
+  },
+  "pinData": {},
+  "tags": [
+    {
+      "name": "gestao-financeira"
+    }
+  ]
+}

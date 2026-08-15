@@ -1,0 +1,422 @@
+{
+  "name": "Financeiro · 10 · Core (lançamento)",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "lancamento",
+        "authentication": "headerAuth",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "id": "webhook-core",
+      "name": "Entrada",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        -200,
+        300
+      ],
+      "webhookId": "gestao-financeira-lancamento",
+      "notes": "POST /webhook/lancamento\nCorpo: { origem, pessoa, texto?, base64?, mime?, nome_arquivo?, chat_id? }",
+      "notesInFlow": true
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "a1",
+              "name": "SHEETS_DOC_ID",
+              "value": "COLE_AQUI_O_ID_DA_PLANILHA",
+              "type": "string"
+            },
+            {
+              "id": "a2",
+              "name": "ABA_LANCAMENTOS",
+              "value": "Lancamentos",
+              "type": "string"
+            },
+            {
+              "id": "a3",
+              "name": "MODEL",
+              "value": "claude-opus-5",
+              "type": "string"
+            },
+            {
+              "id": "a4",
+              "name": "EFFORT",
+              "value": "medium",
+              "type": "string"
+            }
+          ]
+        },
+        "includeOtherFields": true,
+        "options": {}
+      },
+      "id": "config-core",
+      "name": "Config",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        20,
+        300
+      ],
+      "notes": "Preencha SHEETS_DOC_ID.\nEFFORT: low | medium | high | xhigh | max",
+      "notesInFlow": true
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "b1",
+              "name": "origem",
+              "value": "={{ $json.body.origem || $json.origem || 'api' }}",
+              "type": "string"
+            },
+            {
+              "id": "b2",
+              "name": "pessoa",
+              "value": "={{ $json.body.pessoa || $json.pessoa || 'Kayo' }}",
+              "type": "string"
+            },
+            {
+              "id": "b3",
+              "name": "texto",
+              "value": "={{ $json.body.texto || $json.texto || '' }}",
+              "type": "string"
+            },
+            {
+              "id": "b4",
+              "name": "base64",
+              "value": "={{ $json.body.base64 || $json.base64 || '' }}",
+              "type": "string"
+            },
+            {
+              "id": "b5",
+              "name": "mime",
+              "value": "={{ $json.body.mime || $json.mime || '' }}",
+              "type": "string"
+            },
+            {
+              "id": "b6",
+              "name": "nome_arquivo",
+              "value": "={{ $json.body.nome_arquivo || $json.nome_arquivo || '' }}",
+              "type": "string"
+            },
+            {
+              "id": "b7",
+              "name": "chat_id",
+              "value": "={{ $json.body.chat_id || $json.chat_id || '' }}",
+              "type": "string"
+            },
+            {
+              "id": "b8",
+              "name": "contexto",
+              "value": "={{ $json.body.contexto || $json.contexto || '' }}",
+              "type": "string"
+            },
+            {
+              "id": "b9",
+              "name": "anexo",
+              "value": "={{ $json.body.anexo || $json.anexo || '' }}",
+              "type": "string"
+            }
+          ]
+        },
+        "includeOtherFields": true,
+        "options": {}
+      },
+      "id": "payload-core",
+      "name": "Payload",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        240,
+        300
+      ],
+      "notes": "Aceita o corpo tanto em $json.body (webhook)\nquanto na raiz (chamada interna).",
+      "notesInFlow": true
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "// ============================================================\n// Monta a requisição para a API da Anthropic.\n// Node: Code (modo: Run Once for Each Item)\n// Espelha config/plano-de-contas.json — mantenha os dois em sincronia.\n// ============================================================\n\nconst p = $json;\nconst HOJE = new Date().toLocaleDateString('sv-SE', { timeZone: 'America/Sao_Paulo' }); // AAAA-MM-DD\n\n// ---------- Plano de contas ----------\nconst CATEGORIAS = {\n  'Moradia': ['Aluguel', 'Condomínio', 'IPTU', 'Energia', 'Gás', 'Água', 'Internet/TV', 'Manutenção', 'Mobiliário'],\n  'Alimentação': ['Supermercado', 'Feira/Hortifruti', 'Restaurante', 'Delivery', 'Padaria', 'Café/Lanche'],\n  'Transporte': ['Combustível', 'Pedágio/Sem Parar', 'App de transporte', 'Estacionamento', 'Manutenção veicular', 'IPVA/Licenciamento', 'Seguro auto', 'Financiamento veículo'],\n  'Saúde': ['Plano de saúde', 'Farmácia', 'Consulta/Exame', 'Terapia', 'Academia/Esporte'],\n  'Educação': ['Escola', 'Curso', 'Material escolar', 'Livros'],\n  'Filhos': ['Mensalidade escolar', 'Vestuário infantil', 'Atividades', 'Brinquedos', 'Saúde infantil'],\n  'Serviços Domésticos': ['Diarista', 'Mensalista', 'Babá', '13º/Encargos'],\n  'Pessoal': ['Vestuário', 'Beleza/Barbearia', 'Presentes', 'Assinaturas', 'Hobbies', 'Celular'],\n  'Lazer': ['Streaming', 'Viagem', 'Passeios', 'Bar/Restaurante social', 'Eventos'],\n  'Doações': ['Igreja/Oferta', 'Doação', 'Ação social'],\n  'Impostos e Tarifas': ['Tarifa bancária', 'Juros/Encargos', 'IOF', 'Simples Nacional', 'DARF/DAS', 'Multas', 'Outros impostos'],\n  'Dívidas': ['Empréstimo', 'Parcelamento', 'Cheque especial'],\n  'Investimentos': ['Aporte', 'Cripto', 'Previdência', 'Reserva'],\n  'Família/Karen': ['Aluguel Karen', 'Espólio', 'Repasse', 'Aporte recebido'],\n  'Receitas': ['Salário', 'Pró-labore', 'Comissão', 'Aluguel recebido', 'Rendimentos', 'Reembolso', '13º/Férias', 'Outras receitas'],\n  'Transferências': ['Entre contas próprias', 'Pagamento de fatura', 'Aporte para terceiros'],\n  'Outros': ['Não classificado']\n};\n\nconst RUBRICAS = [\n  'AluguelCondomín.', 'Escola Malu', 'Merc.Pg.Aliment.Tr', 'Bradesco ELO 20 (Mensal',\n  'Bradesco 05 (mensal)', 'Nubank 04 (assinaturas)', 'Itau Azul (zerar)',\n  'Cartão P.A (parcelados)', 'Sem Parar', 'Selma/Gloria', 'Natiane', 'Luz Enel',\n  'Comgás', 'Tarifas.Tx;Impostos', 'Empréstimo Itaú', 'Impostos Incyclus', 'Extras',\n  'Bolt', 'Incyclus', 'Migratio', 'Karen', 'Aporte / 13º / Férias'\n];\n\nconst CONTAS_CARTOES = [\n  'Bradesco', 'Banco Inter - Incyclus', 'Mercado Pago - DevHouse', 'Itaú', 'Rico',\n  'Bradesco ELO 20', 'Bradesco 05', 'Nubank 04', 'Itaú Azul',\n  'Cartão Pão de Açúcar', 'Cartão Mercado Pago', 'Dinheiro', 'Desconhecido'\n];\n\nconst listaCategorias = Object.keys(CATEGORIAS);\nconst textoCategorias = Object.entries(CATEGORIAS)\n  .map(([c, subs]) => `- ${c}: ${subs.join(' | ')}`)\n  .join('\\n');\n\n// ---------- Schema de saída estruturada ----------\nconst schema = {\n  type: 'object',\n  properties: {\n    lancamentos: {\n      type: 'array',\n      items: {\n        type: 'object',\n        properties: {\n          data: { type: 'string', description: 'AAAA-MM-DD' },\n          descricao: { type: 'string', description: 'Texto original do lançamento' },\n          estabelecimento: { type: 'string', description: 'Nome limpo do comerciante' },\n          valor: { type: 'number', description: 'Sempre positivo, em reais' },\n          tipo: { type: 'string', enum: ['despesa', 'receita', 'transferencia'] },\n          metodo: { type: 'string', enum: ['credito', 'debito', 'pix', 'dinheiro', 'boleto', 'transferencia', 'desconhecido'] },\n          conta_cartao: { type: 'string', enum: CONTAS_CARTOES },\n          parcela_atual: { type: 'integer' },\n          parcelas_total: { type: 'integer' },\n          categoria: { type: 'string', enum: listaCategorias },\n          subcategoria: { type: 'string' },\n          rubrica: { type: 'string', enum: RUBRICAS },\n          confianca: { type: 'number', description: '0 a 1' },\n          observacao: { type: 'string' }\n        },\n        required: ['data', 'descricao', 'estabelecimento', 'valor', 'tipo', 'metodo',\n                   'conta_cartao', 'parcela_atual', 'parcelas_total', 'categoria',\n                   'subcategoria', 'rubrica', 'confianca', 'observacao'],\n        additionalProperties: false\n      }\n    },\n    resumo: { type: 'string', description: 'Uma frase sobre o que foi lido' }\n  },\n  required: ['lancamentos', 'resumo'],\n  additionalProperties: false\n};\n\n// ---------- System prompt ----------\nconst system = `Você é o assistente de controle financeiro da família Chegancas. Lê comprovantes, notificações de cartão, faturas, prints e descrições em texto livre, e devolve lançamentos estruturados.\n\nREGRAS\n\n1. ESCOPO\nExtraia TODOS os lançamentos presentes no conteúdo.\n- Cupom fiscal ou notificação de compra = 1 lançamento.\n- Fatura de cartão = 1 lançamento por linha de compra. NÃO inclua a linha de \"pagamento recebido\", nem o total da fatura, nem saldo anterior, nem encargos já detalhados como linha própria.\n- Extrato bancário = 1 lançamento por movimento.\nSe não houver nenhum lançamento financeiro no conteúdo, devolva a lista vazia.\n\n2. VALORES\nReais (BRL). Ponto como separador decimal, sem símbolo de moeda. SEMPRE positivo — o sinal é dado pelo campo tipo. \"R$ 1.234,56\" vira 1234.56.\n\n3. DATAS\nFormato AAAA-MM-DD. Sem ano no documento, use o ano corrente de ${HOJE}. Sem data alguma, use ${HOJE}.\n\n4. TIPO\n- \"despesa\": saída por consumo.\n- \"receita\": entrada de dinheiro.\n- \"transferencia\": movimento entre contas próprias, pagamento de fatura de cartão, aporte entre contas, resgate ou aplicação.\nNUNCA classifique pagamento de fatura de cartão como despesa. As compras do cartão já entram individualmente; contar as duas coisas dobraria a despesa. Mesma regra para \"Aporte Itau\", \"Aporte Bradesco\", \"Aporte ML\".\n\n5. PARCELAMENTO\nQuando a descrição indicar \"3/10\", \"PARC 03/10\", \"3 de 10\" ou similar, preencha parcela_atual e parcelas_total, e registre em valor o valor DA PARCELA — não o total da compra. À vista: ambos 0.\n\n6. ESTABELECIMENTO\nNome limpo, sem código de maquininha, sem cidade, sem asterisco.\n\"PAG*IFOOD SAO PAULO\" -> \"iFood\". \"MP *PAODEACUCAR\" -> \"Pão de Açúcar\".\n\n7. CATEGORIA (natureza do gasto)\nEscolha estritamente da lista. Nada serve? \"Outros\" / \"Não classificado\".\n\n8. RUBRICA (linha do orçamento da família)\nA rubrica segue o INSTRUMENTO DE PAGAMENTO quando a compra é de cartão de crédito:\n- compra no Bradesco ELO 20 -> \"Bradesco ELO 20 (Mensal\"\n- compra no Bradesco 05 -> \"Bradesco 05 (mensal)\"\n- compra no Nubank 04 -> \"Nubank 04 (assinaturas)\"\n- compra no Itaú Azul -> \"Itau Azul (zerar)\"\n- compra no Cartão Pão de Açúcar -> \"Cartão P.A (parcelados)\"\n- compra no Cartão Mercado Pago -> \"Merc.Pg.Aliment.Tr\"\nPara débito, pix, boleto ou dinheiro, use a rubrica de natureza correspondente (Luz Enel, Comgás, Natiane, Selma/Gloria, Sem Parar, AluguelCondomín., Escola Malu, Empréstimo Itaú, Impostos Incyclus, Tarifas.Tx;Impostos). Sem correspondência: \"Extras\".\n\n9. CONFIANÇA\n0 a 1. Use abaixo de 0.7 quando valor, data ou estabelecimento tiverem sido inferidos, estiverem ilegíveis ou ambíguos. Seja honesto — um lançamento marcado como incerto é revisado; um lançamento errado com confiança alta entra silenciosamente na contabilidade.\n\n10. NÃO INVENTE\nCampo desconhecido: string vazia \"\" ou número 0. Não preencha por plausibilidade.\n\nCATEGORIAS PERMITIDAS\n${textoCategorias}\n\nRUBRICAS PERMITIDAS\n${RUBRICAS.map(r => '- ' + r).join('\\n')}`;\n\n// ---------- Conteúdo do usuário ----------\nconst content = [];\nconst mime = (p.mime || '').toLowerCase();\n\nif (p.base64 && mime.includes('pdf')) {\n  content.push({\n    type: 'document',\n    source: { type: 'base64', media_type: 'application/pdf', data: p.base64 }\n  });\n} else if (p.base64) {\n  const mt = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'].includes(mime) ? mime : 'image/jpeg';\n  content.push({\n    type: 'image',\n    source: { type: 'base64', media_type: mt, data: p.base64 }\n  });\n}\n\nconst partes = [];\npartes.push(`Origem: ${p.origem || 'desconhecida'}`);\npartes.push(`Pessoa responsável: ${p.pessoa || 'Kayo'}`);\npartes.push(`Data de hoje: ${HOJE}`);\nif (p.nome_arquivo) partes.push(`Arquivo: ${p.nome_arquivo}`);\nif (p.contexto) partes.push(`Contexto: ${p.contexto}`);\nif (p.texto) partes.push(`\\nConteúdo informado:\\n${p.texto}`);\nif (p.base64) partes.push('\\nExtraia os lançamentos do arquivo anexo.');\n\ncontent.push({ type: 'text', text: partes.join('\\n') });\n\n// ---------- Corpo da requisição ----------\nconst anthropic_body = {\n  model: p.MODEL || 'claude-opus-5',\n  max_tokens: 16000,\n  system: [{ type: 'text', text: system, cache_control: { type: 'ephemeral' } }],\n  output_config: {\n    effort: p.EFFORT || 'medium',\n    format: { type: 'json_schema', schema: schema }\n  },\n  messages: [{ role: 'user', content: content }]\n};\n\nreturn {\n  json: {\n    anthropic_body,\n    meta: {\n      origem: p.origem || 'desconhecida',\n      pessoa: p.pessoa || 'Kayo',\n      texto: p.texto || '',\n      anexo: p.anexo || '',\n      chat_id: p.chat_id || '',\n      SHEETS_DOC_ID: p.SHEETS_DOC_ID,\n      ABA_LANCAMENTOS: p.ABA_LANCAMENTOS\n    }\n  }\n};\n"
+      },
+      "id": "montar-requisição",
+      "name": "Montar Requisição",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        460,
+        300
+      ],
+      "notes": "Prompt + schema de saída estruturada.\nEspelha config/plano-de-contas.json",
+      "notesInFlow": true
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.anthropic.com/v1/messages",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "anthropic-version",
+              "value": "2023-06-01"
+            },
+            {
+              "name": "content-type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.anthropic_body) }}",
+        "options": {
+          "timeout": 300000
+        }
+      },
+      "id": "claude-core",
+      "name": "Claude",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        680,
+        300
+      ],
+      "notes": "Credencial: Header Auth\nNome do header: x-api-key\nValor: sua chave da Anthropic",
+      "notesInFlow": true
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// ============================================================\n// Interpreta a resposta do Claude, aplica regras determinísticas,\n// calcula hash de deduplicação e monta as linhas da aba Lancamentos.\n// Node: Code (modo: Run Once for All Items)\n// Espelha config/regras-merchant.json — mantenha os dois em sincronia.\n// ============================================================\n\n// ---------- Regras determinísticas (vencem a sugestão do Claude) ----------\nconst REGRAS = [\n  { padrao: 'cond. st germain', categoria: 'Moradia', subcategoria: 'Condomínio', rubrica: 'AluguelCondomín.', tipo: 'despesa' },\n  { padrao: 'saintgerman', categoria: 'Moradia', subcategoria: 'Condomínio', rubrica: 'AluguelCondomín.', tipo: 'despesa' },\n  { padrao: 'condominio', categoria: 'Moradia', subcategoria: 'Condomínio', rubrica: 'AluguelCondomín.', tipo: 'despesa' },\n  { padrao: 'terradamata', categoria: 'Moradia', subcategoria: 'Aluguel', rubrica: 'AluguelCondomín.', tipo: 'despesa' },\n  { padrao: 'terra da mata', categoria: 'Moradia', subcategoria: 'Aluguel', rubrica: 'AluguelCondomín.', tipo: 'despesa' },\n  { padrao: 'enel', categoria: 'Moradia', subcategoria: 'Energia', rubrica: 'Luz Enel', tipo: 'despesa' },\n  { padrao: 'eletropaulo', categoria: 'Moradia', subcategoria: 'Energia', rubrica: 'Luz Enel', tipo: 'despesa' },\n  { padrao: 'comgas', categoria: 'Moradia', subcategoria: 'Gás', rubrica: 'Comgás', tipo: 'despesa' },\n  { padrao: 'escola malu', categoria: 'Filhos', subcategoria: 'Mensalidade escolar', rubrica: 'Escola Malu', tipo: 'despesa' },\n  { padrao: 'selma', categoria: 'Serviços Domésticos', subcategoria: 'Mensalista', rubrica: 'Selma/Gloria', tipo: 'despesa' },\n  { padrao: 'gloria', categoria: 'Serviços Domésticos', subcategoria: 'Mensalista', rubrica: 'Selma/Gloria', tipo: 'despesa' },\n  { padrao: 'natiane', categoria: 'Serviços Domésticos', subcategoria: 'Diarista', rubrica: 'Natiane', tipo: 'despesa' },\n  { padrao: 'sem parar', categoria: 'Transporte', subcategoria: 'Pedágio/Sem Parar', rubrica: 'Sem Parar', tipo: 'despesa' },\n  { padrao: 'semparar', categoria: 'Transporte', subcategoria: 'Pedágio/Sem Parar', rubrica: 'Sem Parar', tipo: 'despesa' },\n  { padrao: 'parcela kicks', categoria: 'Transporte', subcategoria: 'Financiamento veículo', rubrica: 'Extras', tipo: 'despesa' },\n  { padrao: 'kicks', categoria: 'Transporte', subcategoria: 'Financiamento veículo', rubrica: 'Extras', tipo: 'despesa' },\n  { padrao: 'ipva', categoria: 'Transporte', subcategoria: 'IPVA/Licenciamento', rubrica: 'Extras', tipo: 'despesa' },\n  { padrao: 'estacionamento', categoria: 'Transporte', subcategoria: 'Estacionamento', rubrica: 'Extras', tipo: 'despesa' },\n  { padrao: 'posto', categoria: 'Transporte', subcategoria: 'Combustível', rubrica: 'Extras', tipo: 'despesa' },\n  { padrao: 'shell', categoria: 'Transporte', subcategoria: 'Combustível', rubrica: 'Extras', tipo: 'despesa' },\n  { padrao: 'ipiranga', categoria: 'Transporte', subcategoria: 'Combustível', rubrica: 'Extras', tipo: 'despesa' },\n  { padrao: 'uber', categoria: 'Transporte', subcategoria: 'App de transporte', rubrica: 'Extras', tipo: 'despesa' },\n  { padrao: 'ifood', categoria: 'Alimentação', subcategoria: 'Delivery', rubrica: 'Extras', tipo: 'despesa' },\n  { padrao: 'rappi', categoria: 'Alimentação', subcategoria: 'Delivery', rubrica: 'Extras', tipo: 'despesa' },\n  { padrao: 'pao de acucar', categoria: 'Alimentação', subcategoria: 'Supermercado', rubrica: 'Merc.Pg.Aliment.Tr', tipo: 'despesa' },\n  { padrao: 'paoacucar', categoria: 'Alimentação', subcategoria: 'Supermercado', rubrica: 'Merc.Pg.Aliment.Tr', tipo: 'despesa' },\n  { padrao: 'carrefour', categoria: 'Alimentação', subcategoria: 'Supermercado', rubrica: 'Merc.Pg.Aliment.Tr', tipo: 'despesa' },\n  { padrao: 'assai', categoria: 'Alimentação', subcategoria: 'Supermercado', rubrica: 'Merc.Pg.Aliment.Tr', tipo: 'despesa' },\n  { padrao: 'st marche', categoria: 'Alimentação', subcategoria: 'Supermercado', rubrica: 'Merc.Pg.Aliment.Tr', tipo: 'despesa' },\n  { padrao: 'hortifruti', categoria: 'Alimentação', subcategoria: 'Feira/Hortifruti', rubrica: 'Merc.Pg.Aliment.Tr', tipo: 'despesa' },\n  { padrao: 'zion', categoria: 'Doações', subcategoria: 'Igreja/Oferta', rubrica: 'Extras', tipo: 'despesa' },\n  { padrao: 'oferta ibp', categoria: 'Doações', subcategoria: 'Igreja/Oferta', rubrica: 'Extras', tipo: 'despesa' },\n  { padrao: 'kart com cristo', categoria: 'Doações', subcategoria: 'Ação social', rubrica: 'Extras', tipo: 'despesa' },\n  { padrao: 'doacao', categoria: 'Doações', subcategoria: 'Doação', rubrica: 'Extras', tipo: 'despesa' },\n  { padrao: 'tarifa', categoria: 'Impostos e Tarifas', subcategoria: 'Tarifa bancária', rubrica: 'Tarifas.Tx;Impostos', tipo: 'despesa' },\n  { padrao: 'encargos chq', categoria: 'Dívidas', subcategoria: 'Cheque especial', rubrica: 'Tarifas.Tx;Impostos', tipo: 'despesa' },\n  { padrao: 'encargos juros', categoria: 'Impostos e Tarifas', subcategoria: 'Juros/Encargos', rubrica: 'Tarifas.Tx;Impostos', tipo: 'despesa' },\n  { padrao: 'iof', categoria: 'Impostos e Tarifas', subcategoria: 'IOF', rubrica: 'Tarifas.Tx;Impostos', tipo: 'despesa' },\n  { padrao: 'simples nacional', categoria: 'Impostos e Tarifas', subcategoria: 'Simples Nacional', rubrica: 'Impostos Incyclus', tipo: 'despesa' },\n  { padrao: 'darf', categoria: 'Impostos e Tarifas', subcategoria: 'DARF/DAS', rubrica: 'Impostos Incyclus', tipo: 'despesa' },\n  { padrao: 'imposto das', categoria: 'Impostos e Tarifas', subcategoria: 'DARF/DAS', rubrica: 'Impostos Incyclus', tipo: 'despesa' },\n  { padrao: 'emprest', categoria: 'Dívidas', subcategoria: 'Empréstimo', rubrica: 'Empréstimo Itaú', tipo: 'despesa' },\n  { padrao: 'salario bolt', categoria: 'Receitas', subcategoria: 'Salário', rubrica: 'Bolt', tipo: 'receita' },\n  { padrao: 'bolt', categoria: 'Receitas', subcategoria: 'Salário', rubrica: 'Bolt', tipo: 'receita' },\n  { padrao: 'incyclus', categoria: 'Receitas', subcategoria: 'Pró-labore', rubrica: 'Incyclus', tipo: 'receita' },\n  { padrao: 'araplast', categoria: 'Receitas', subcategoria: 'Pró-labore', rubrica: 'Incyclus', tipo: 'receita' },\n  { padrao: 'migratio', categoria: 'Receitas', subcategoria: 'Comissão', rubrica: 'Migratio', tipo: 'receita' },\n  { padrao: 'pro labore', categoria: 'Receitas', subcategoria: 'Pró-labore', rubrica: 'Incyclus', tipo: 'receita' },\n  { padrao: 'rendimento', categoria: 'Receitas', subcategoria: 'Rendimentos', rubrica: 'Extras', tipo: 'receita' },\n  { padrao: 'reembolso', categoria: 'Receitas', subcategoria: 'Reembolso', rubrica: 'Extras', tipo: 'receita' },\n  { padrao: 'aluguel karen', categoria: 'Família/Karen', subcategoria: 'Aluguel Karen', rubrica: 'Karen', tipo: 'despesa' },\n  { padrao: 'espolio', categoria: 'Família/Karen', subcategoria: 'Espólio', rubrica: 'Karen', tipo: 'receita' },\n  { padrao: 'repasse karen', categoria: 'Família/Karen', subcategoria: 'Repasse', rubrica: 'Karen', tipo: 'despesa' },\n  { padrao: 'aporte karen', categoria: 'Família/Karen', subcategoria: 'Aporte recebido', rubrica: 'Karen', tipo: 'receita' },\n  { padrao: 'mercado bitcoin', categoria: 'Investimentos', subcategoria: 'Cripto', rubrica: 'Extras', tipo: 'transferencia' },\n  { padrao: 'terap', categoria: 'Saúde', subcategoria: 'Terapia', rubrica: 'Extras', tipo: 'despesa' },\n  { padrao: 'drogaria', categoria: 'Saúde', subcategoria: 'Farmácia', rubrica: 'Extras', tipo: 'despesa' },\n  { padrao: 'drogasil', categoria: 'Saúde', subcategoria: 'Farmácia', rubrica: 'Extras', tipo: 'despesa' },\n  { padrao: 'claro', categoria: 'Pessoal', subcategoria: 'Celular', rubrica: 'Nubank 04 (assinaturas)', tipo: 'despesa' },\n  { padrao: 'netflix', categoria: 'Lazer', subcategoria: 'Streaming', rubrica: 'Nubank 04 (assinaturas)', tipo: 'despesa' },\n  { padrao: 'spotify', categoria: 'Lazer', subcategoria: 'Streaming', rubrica: 'Nubank 04 (assinaturas)', tipo: 'despesa' },\n  { padrao: 'cartao elo', categoria: 'Transferências', subcategoria: 'Pagamento de fatura', rubrica: 'Bradesco ELO 20 (Mensal', tipo: 'transferencia' },\n  { padrao: 'cartao bradesco', categoria: 'Transferências', subcategoria: 'Pagamento de fatura', rubrica: 'Bradesco 05 (mensal)', tipo: 'transferencia' },\n  { padrao: 'cartao nubank', categoria: 'Transferências', subcategoria: 'Pagamento de fatura', rubrica: 'Nubank 04 (assinaturas)', tipo: 'transferencia' },\n  { padrao: 'cartao azul', categoria: 'Transferências', subcategoria: 'Pagamento de fatura', rubrica: 'Itau Azul (zerar)', tipo: 'transferencia' },\n  { padrao: 'cartao itau azul', categoria: 'Transferências', subcategoria: 'Pagamento de fatura', rubrica: 'Itau Azul (zerar)', tipo: 'transferencia' },\n  { padrao: 'cartao pao', categoria: 'Transferências', subcategoria: 'Pagamento de fatura', rubrica: 'Cartão P.A (parcelados)', tipo: 'transferencia' },\n  { padrao: 'cartao mercado p', categoria: 'Transferências', subcategoria: 'Pagamento de fatura', rubrica: 'Merc.Pg.Aliment.Tr', tipo: 'transferencia' },\n  { padrao: 'cartao mp', categoria: 'Transferências', subcategoria: 'Pagamento de fatura', rubrica: 'Merc.Pg.Aliment.Tr', tipo: 'transferencia' },\n  { padrao: 'aporte itau', categoria: 'Transferências', subcategoria: 'Entre contas próprias', rubrica: 'Extras', tipo: 'transferencia' },\n  { padrao: 'aporte bradesco', categoria: 'Transferências', subcategoria: 'Entre contas próprias', rubrica: 'Extras', tipo: 'transferencia' }\n];\n\n// ---------- Utilitários ----------\nfunction semAcento(s) {\n  return String(s || '')\n    .normalize('NFD').replace(/[\\u0300-\\u036f]/g, '')\n    .toLowerCase().trim();\n}\n\n// FNV-1a 32 bits, aplicado duas vezes com sementes diferentes -> 16 chars hex.\n// Sem dependência externa (o Code node do n8n bloqueia require por padrão).\nfunction hash16(str) {\n  let h1 = 0x811c9dc5;\n  let h2 = 0xcbf29ce4;\n  for (let i = 0; i < str.length; i++) {\n    const c = str.charCodeAt(i);\n    h1 = Math.imul(h1 ^ c, 16777619) >>> 0;\n    h2 = Math.imul(h2 ^ c, 2246822519) >>> 0;\n  }\n  return h1.toString(16).padStart(8, '0') + h2.toString(16).padStart(8, '0');\n}\n\nfunction aplicarRegra(lanc) {\n  const alvo = semAcento(lanc.estabelecimento + ' ' + lanc.descricao);\n  for (const r of REGRAS) {\n    if (alvo.includes(semAcento(r.padrao))) {\n      return r;\n    }\n  }\n  return null;\n}\n\n// ---------- Processamento ----------\nconst saida = [];\nconst entradas = $input.all();\nconst reqs = $('Montar Requisição').all();\nconst agora = new Date().toLocaleString('sv-SE', { timeZone: 'America/Sao_Paulo' });\n\nfor (let i = 0; i < entradas.length; i++) {\n  const resp = entradas[i].json;\n  const meta = ((reqs[i] || reqs[0] || {}).json || {}).meta || {};\n\n  // A API pode recusar a requisição por política de segurança.\n  // Isso volta como HTTP 200 — precisa ser checado antes de ler o conteúdo.\n  if (resp.stop_reason === 'refusal') {\n    throw new Error('A API recusou processar este conteúdo. Categoria: ' +\n      ((resp.stop_details || {}).category || 'não informada'));\n  }\n\n  // Com adaptive thinking ligado, o primeiro bloco pode ser 'thinking'.\n  const blocoTexto = (resp.content || []).find(b => b.type === 'text');\n  if (!blocoTexto) {\n    throw new Error('Resposta da API sem bloco de texto. stop_reason=' + resp.stop_reason);\n  }\n\n  let dados;\n  try {\n    dados = JSON.parse(blocoTexto.text);\n  } catch (e) {\n    throw new Error('Resposta não é JSON válido: ' + String(blocoTexto.text).slice(0, 300));\n  }\n\n  const lista = Array.isArray(dados.lancamentos) ? dados.lancamentos : [];\n\n  for (const l of lista) {\n    // Guarda: valor zerado ou ausente não vira lançamento.\n    const valorNum = Number(l.valor);\n    if (!isFinite(valorNum) || valorNum === 0) continue;\n\n    const regra = aplicarRegra(l);\n\n    const categoria    = regra ? regra.categoria    : (l.categoria || 'Outros');\n    const subcategoria = regra ? regra.subcategoria : (l.subcategoria || 'Não classificado');\n    const tipo         = regra ? regra.tipo         : (l.tipo || 'despesa');\n\n    // Compra em cartão de crédito: a rubrica segue o cartão, não a natureza.\n    // É assim que o orçamento da Kay_2026 está montado.\n    const CARTAO_RUBRICA = {\n      'Bradesco ELO 20': 'Bradesco ELO 20 (Mensal',\n      'Bradesco 05': 'Bradesco 05 (mensal)',\n      'Nubank 04': 'Nubank 04 (assinaturas)',\n      'Itaú Azul': 'Itau Azul (zerar)',\n      'Cartão Pão de Açúcar': 'Cartão P.A (parcelados)',\n      'Cartão Mercado Pago': 'Merc.Pg.Aliment.Tr'\n    };\n\n    let rubrica;\n    if (l.metodo === 'credito' && CARTAO_RUBRICA[l.conta_cartao]) {\n      rubrica = CARTAO_RUBRICA[l.conta_cartao];\n    } else if (regra) {\n      rubrica = regra.rubrica;\n    } else {\n      rubrica = l.rubrica || 'Extras';\n    }\n\n    const conf = regra ? 1 : Math.max(0, Math.min(1, Number(l.confianca) || 0));\n    const valor = Math.abs(Math.round(valorNum * 100) / 100);\n    const data = /^\\d{4}-\\d{2}-\\d{2}$/.test(l.data) ? l.data : agora.slice(0, 10);\n\n    const chave = [\n      data,\n      semAcento(l.estabelecimento).replace(/[^a-z0-9]/g, ''),\n      valor.toFixed(2),\n      l.metodo || '',\n      l.parcela_atual || 0\n    ].join('|');\n\n    const hash = hash16(chave);\n    const naoClassificado = categoria === 'Outros';\n\n    saida.push({\n      json: {\n        id: 'LCT-' + Date.now().toString(36).toUpperCase() + '-' + hash.slice(0, 6).toUpperCase(),\n        data: data,\n        data_registro: agora,\n        descricao: String(l.descricao || '').slice(0, 500),\n        estabelecimento: String(l.estabelecimento || '').slice(0, 200),\n        valor: valor,\n        tipo: tipo,\n        categoria: categoria,\n        subcategoria: subcategoria,\n        rubrica: rubrica,\n        metodo: l.metodo || 'desconhecido',\n        conta_cartao: l.conta_cartao || 'Desconhecido',\n        parcela_atual: Number(l.parcela_atual) || 0,\n        parcelas_total: Number(l.parcelas_total) || 0,\n        pessoa: meta.pessoa || 'Kayo',\n        origem: meta.origem || 'desconhecida',\n        confianca: conf,\n        status: (conf >= 0.7 && !naoClassificado) ? 'confirmado' : 'pendente',\n        hash_dedup: hash,\n        observacao: String(l.observacao || ''),\n        anexo: meta.anexo || '',\n        _chat_id: meta.chat_id || '',\n        _resumo: dados.resumo || '',\n        _regra_aplicada: regra ? regra.padrao : ''\n      }\n    });\n  }\n}\n\n// Nenhum lançamento encontrado: devolve um item sinalizando isso,\n// para o chamador conseguir responder algo em vez de silêncio.\nif (saida.length === 0) {\n  const meta = ((reqs[0] || {}).json || {}).meta || {};\n  return [{\n    json: {\n      _vazio: true,\n      _chat_id: meta.chat_id || '',\n      _resumo: 'Não identifiquei nenhum lançamento financeiro neste conteúdo.'\n    }\n  }];\n}\n\nreturn saida;\n"
+      },
+      "id": "normalizar",
+      "name": "Normalizar",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        900,
+        300
+      ],
+      "notes": "Regras determinísticas + hash de deduplicação.\nEspelha config/regras-merchant.json",
+      "notesInFlow": true
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "c1",
+              "leftValue": "={{ $json._vazio }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "looseTypeValidation": true,
+        "options": {}
+      },
+      "id": "if-vazio",
+      "name": "Achou algo?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1120,
+        300
+      ],
+      "notes": "true = nada encontrado (pula a gravação)",
+      "notesInFlow": true
+    },
+    {
+      "parameters": {
+        "operation": "appendOrUpdate",
+        "documentId": {
+          "__rl": true,
+          "value": "COLE_AQUI_O_ID_DA_PLANILHA",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Lancamentos",
+          "mode": "name"
+        },
+        "columns": {
+          "mappingMode": "autoMapInputData",
+          "matchingColumns": [
+            "hash_dedup"
+          ],
+          "value": {},
+          "schema": [],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "options": {
+          "cellFormat": "USER_ENTERED"
+        }
+      },
+      "id": "gravar-core",
+      "name": "Gravar na Planilha",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        1340,
+        400
+      ],
+      "notes": "appendOrUpdate com chave hash_dedup:\nreenviar o mesmo comprovante atualiza a linha\nem vez de duplicar.",
+      "notesInFlow": true
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "s1",
+              "name": "ok",
+              "value": "={{ true }}",
+              "type": "boolean"
+            }
+          ]
+        },
+        "includeOtherFields": true,
+        "options": {}
+      },
+      "id": "saida-core",
+      "name": "Resposta",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        1560,
+        400
+      ],
+      "notes": "O que sai daqui é o corpo da resposta do webhook.",
+      "notesInFlow": true
+    }
+  ],
+  "connections": {
+    "Entrada": {
+      "main": [
+        [
+          {
+            "node": "Config",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Config": {
+      "main": [
+        [
+          {
+            "node": "Payload",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Payload": {
+      "main": [
+        [
+          {
+            "node": "Montar Requisição",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Montar Requisição": {
+      "main": [
+        [
+          {
+            "node": "Claude",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Claude": {
+      "main": [
+        [
+          {
+            "node": "Normalizar",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalizar": {
+      "main": [
+        [
+          {
+            "node": "Achou algo?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Achou algo?": {
+      "main": [
+        [
+          {
+            "node": "Resposta",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Gravar na Planilha",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Gravar na Planilha": {
+      "main": [
+        [
+          {
+            "node": "Resposta",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "timezone": "America/Sao_Paulo",
+    "saveDataErrorExecution": "all",
+    "saveDataSuccessExecution": "all"
+  },
+  "pinData": {},
+  "tags": [
+    {
+      "name": "gestao-financeira"
+    }
+  ]
+}
